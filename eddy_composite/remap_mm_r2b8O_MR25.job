@@ -1,0 +1,71 @@
+#!/bin/bash
+#SBATCH --account=mh0256
+#SBATCH --job-name=remap25
+#SBATCH --partition=compute
+#SBATCH --nodes=1
+#SBATCH --mem=0
+#SBATCH --output=remap25.run.%j.o
+#SBATCH --error=remap25.run.%j.o
+#SBATCH --exclusive
+#SBATCH --time=08:00:00
+#SBATCH --mail-type=END
+#SBATCH --mail-user=dian.putrasahan@mpimet.mpg.de
+
+if [ -z "$1" ] ; then
+    echo "invalid number of parameters: need varname"
+    exit 1      #exit out of program
+fi
+if [ -z "$2" ] ; then
+    echo "invalid number of parameters: need expid"
+    exit 1      #exit out of program
+fi
+
+# ©2023 MPI-M, Dian Putrasahan
+
+varname=$1
+expid=$2
+
+module load cdo
+
+find_files=/home/m/m300466/pyfuncs/find_files
+
+#varname=zos
+#varname=Wind_Speed_10m
+#varname=atmos_fluxes_HeatFlux_Latent
+#varname=mlotst
+#varname=sea_level_pressure
+#varname=to
+#varname=atmos_fluxes_FrshFlux_Precipitation
+
+#expid=ngc2013
+#expid=rthk001
+if [ $expid == 'ngc2013' ]; then
+   catalog=/home/m/m300466/NGC2/intake/${expid}_bu1213.json
+elif [ $expid == 'rthk001' ]; then
+   catalog=/home/m/m300466/NGC2/intake/rthk001_test-sorted_stylized.json
+fi
+
+freqm=mm
+ocngrid=/pool/data/ICON/grids/public/mpim/0034/icon_grid_0034_R02B08_O.nc
+remapwgt=/work/mh0256/m300466/DPP/weights/r2b8O_MR25_yconremapweights.nc
+targetgrid=/work/mh0287/m300466/topaz/ngc2013/zos/zos_2054-01-01.nc
+
+
+#Obtain a list of path and file names that contain specified variable, frequency and time range (Feb 2020 - Dec 2049)
+varfilelist=$( $find_files --catalog_file=${catalog} ${varname} ${expid} --frequency=1month --time_range 2020-02-01 2050-02-01T23)
+echo $varfilelist | tr ' ' '\n' > filelist_0120
+
+#Extract upper 500m, monthly mean and remap
+mkdir -p /work/mh0287/m300466/topaz/${expid}/${varname}
+mkdir -p /work/mh0287/m300466/topaz/${expid}/${varname}/${freqm}
+
+if [ $varname == to ]; then
+   zidx=1
+   varfile=/work/mh0287/m300466/topaz/${expid}/${varname}/${freqm}/${expid}_${varname}_${zidx}_${freqm}_202002-205001_MR25.nc
+   cdo -L -P 128 -remap,${targetgrid},${remapwgt} -shifttime,-12hour -setgrid,${ocngrid} -select,name=${varname},levidx=${zidx} [ ${varfilelist} ] ${varfile}
+else
+   varfile=/work/mh0287/m300466/topaz/${expid}/${varname}/${freqm}/${expid}_${varname}_${freqm}_202002-205001_MR25.nc
+   cdo -L -P 128 -remap,${targetgrid},${remapwgt} -shifttime,-12hour -setgrid,${ocngrid} -select,name=${varname} [ ${varfilelist} ] ${varfile}
+fi
+#We shift the time stamp by -12hours in order to get it to the correct month
+
