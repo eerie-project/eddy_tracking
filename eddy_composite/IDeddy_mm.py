@@ -1,5 +1,7 @@
 #!/bin/python
 
+# ©2023 MPI-M, Dian Putrasahan
+
 import sys
 yyyy=sys.argv[1]
 mth=sys.argv[2]

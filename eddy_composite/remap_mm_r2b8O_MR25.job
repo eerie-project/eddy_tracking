@@ -20,6 +20,8 @@ if [ -z "$2" ] ; then
     exit 1      #exit out of program
 fi
 
+# ©2023 MPI-M, Dian Putrasahan
+
 varname=$1
 expid=$2
 

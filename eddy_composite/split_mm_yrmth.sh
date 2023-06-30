@@ -1,5 +1,6 @@
 #!/bin/bash
 # set -ex
+# ©2023 MPI-M, Dian Putrasahan
 
 #------------------------
 # users choice
