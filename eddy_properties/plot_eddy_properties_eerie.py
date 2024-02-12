@@ -5,9 +5,11 @@ read via pyeddytracker's utilities
 '''
 
 import matplotlib
-#matplotlib.use('Agg')
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import cartopy.crs as ccrs
+from cartopy.mpl.gridliner import LATITUDE_FORMATTER,LONGITUDE_FORMATTER
 import xarray as xr
 import numpy as np
 import os
@@ -21,17 +23,21 @@ import cf_units
 eddy_prop_dir = '/scratch/hadom/eddy_prop_dir'
 if not os.path.exists(eddy_prop_dir):
     os.makedirs(eddy_prop_dir)
-fig_dir = '/home/h06/hadom/workspace/tenten/variability/eddy/figs'
+fig_dir = '/home/h06/hadom/workspace/tenten/variability/eddy/figs_to_share'
+if not os.path.exists(fig_dir):
+    os.makedirs(fig_dir)
 
 eddy_types = ['cyclonic', 'anticyclonic']
 
 # minimum lifetime (days) of eddies used to plot tracks
-min_lifetime_plot_tracks = 365
+min_lifetime_plot_tracks = 112
+# minimum lifetime (days) of eddies used for track density etc
+min_lifetime_density = 112
 # minimum lifetime (days) of eddies used for property pdfs etc
 min_lifetime_pdfs = 10
 
 # number of years of data to use
-nyears = 5
+nyears = 20
 
 ### This section is for Met Office models, which use "suite" names to identify simulations
 suites = ['u-cx993', 'aviso']
@@ -60,6 +66,13 @@ colours['anticyclonic'] = ['orange', 'magenta']
 eddy_prop_1 = ['speed_radius', 'speed_average', 'amplitude', 'effective_contour_shape_error']
 eddy_prop_1_factor = [0.001, 100, 100, 1]
 eddy_prop_1_bins = [np.arange(0, 2000, 1), np.arange(0, 1000, 0.5), np.arange(0.0005, 1000, 0.2), np.arange(0, 100, 1)]
+
+properties_2d = ['density', 'genesis', 'feature_density', 'amplitude', 'speed_radius', 'speed_average', 'shape_error']
+units = {'density': 'Counts per 2 degree per year', 'genesis': 'Counts per 2 degree per year', 'feature_density': 'Unique counts per 2 degree per year', 'amplitude': 'cm', 'speed_radius': 'm', 'speed_average': 'cm/s', 'shape_error': '1'}
+scaling = {'density': 1., 'genesis': 1., 'feature_density': 1., 'amplitude': 100., 'speed_radius': 0.001, 'speed_average': 100., 'shape_error': 1}
+c_levels = {'density': [0, 300], 'genesis': [0, 1.5], 'feature_density': [0, 5], 'amplitude': [0, 30], 'speed_radius': [0, 150], 'speed_average': [0, 100], 'shape_error': [0, 70]}
+stat_process = ['mean', 'median', 'stdev']
+stat_process = ['mean']
 
 # all of the eddy properties in the netcdf file (for future reference)
 #eddy_props = ['effective_area', 'effective_contour_height', 'effective_contour_shape_error', 'effective_radius', 'inner_contour_height', 'speed_area', 'speed_contour_height', 'speed_contour_shape_error']
@@ -234,6 +247,110 @@ def storm_lats_lons(eddy_subset, plot_type='genesis'):
         norm_lons.append((lon + 720) % 360)
     return lats, norm_lons, count
 
+def storm_lat_lon_properties(eddy_subset):
+    '''
+    Loop over eddy tracks
+    for a range of lat/lon within the eddy track
+    add values into that grid point
+    '''
+    trackid = np.array(sorted(list(set(eddy_subset.track.values.squeeze()))))
+    for track in trackid:
+        pts = np.argwhere(eddy_subset.track.values == trackid)
+        lats = eddy_subset.latitudes.values[pts]
+        lons = eddy_subset.longitudes.values[pts]
+
+        lat_min = np.amin(lats)
+        lon_min = np.amin(lons)
+        lat_max = np.amax(lats)
+        lon_max = np.amax(lons)
+
+def storm_lat_lon_prop(eddy_subset, nyears):
+    '''
+    Loop over eddy tracks
+    for a range of lat/lon within the eddy track
+    add values into that grid point
+    '''
+    print('storm_prop ')
+    
+    ygrid = 90
+    xgrid = 180
+    #data = np.zeros(shape=(ygrid, xgrid))
+    #data = np.ma.zeros(shape=(ygrid, xgrid))
+    data = np.ma.masked_all(shape=(ygrid, xgrid))
+    binned_cube = _cube_data(data)
+    binned_cube.units = cf_units.Unit(1)
+    #binned_cube.attributes.pop('history', None) 
+    binned_cube_cp = {}
+    for process in stat_process:
+        for prop in properties_2d:
+            binned_cube_cp[(prop, process)] = binned_cube.copy()
+            binned_cube_cp[(prop, process)].var_name = prop
+            binned_cube_cp[(prop, process)].long_name = prop+' '+units[prop]+' '+process
+            binned_cube_cp[(prop, process)].units = cf_units.Unit(1)
+
+    xs, ys = binned_cube.coord('longitude').contiguous_bounds(), binned_cube.coord('latitude').contiguous_bounds()
+    lats = eddy_subset.latitude.values
+    lons = eddy_subset.longitude.values
+
+    # loop over 2x2 degree grid points
+    for j in range(ygrid):
+        for i in range(xgrid):
+            # create lat/lon bin range
+            # find all points within this lat/lon bin
+            # add these points (and any additional values at this point) to the variable at this point
+            lon_w = xs[i]
+            lon_e = xs[i+1]
+            lat_s = ys[j]
+            lat_n = ys[j+1]
+
+            # find indices of points within this grid point
+            pos = np.where((lats >= lat_s) & (lats < lat_n) & (lons >= lon_w) & (lons < lon_e))[0]
+            first_points = np.argwhere(eddy_subset.observation_number.values[pos] == 1)
+            trackids = np.unique(eddy_subset.track.values[pos])
+            if len(pos) > 0:
+                binned_cube_cp[('density', 'mean')].data[j, i] = len(pos)
+
+                binned_cube_cp[('genesis', 'mean')].data[j, i] = len(first_points)
+
+                binned_cube_cp[('feature_density', 'mean')].data[j,i] = len(trackids)
+            
+                for process in stat_process:
+                    if process == 'median':
+                        binned_cube_cp[('amplitude', process)].data[j,i] = np.median(eddy_subset.amplitude.values[pos])
+                        binned_cube_cp[('speed_radius', process)].data[j,i] = np.median(eddy_subset.speed_radius.values[pos])
+                        binned_cube_cp[('speed_average', process)].data[j,i] = np.median(eddy_subset.speed_average.values[pos])
+                        binned_cube_cp[('shape_error', process)].data[j,i] = np.median(eddy_subset.effective_contour_shape_error.values[pos])
+                    elif process == 'mean':
+                        binned_cube_cp[('amplitude', process)].data[j,i] = np.mean(eddy_subset.amplitude.values[pos])
+                        binned_cube_cp[('speed_radius', process)].data[j,i] = np.mean(eddy_subset.speed_radius.values[pos])
+                        binned_cube_cp[('speed_average', process)].data[j,i] = np.mean(eddy_subset.speed_average.values[pos])
+                        binned_cube_cp[('shape_error', process)].data[j,i] = np.mean(eddy_subset.effective_contour_shape_error.values[pos])
+                    elif process == 'stdev':
+                        binned_cube_cp[('amplitude', process)].data[j,i] = np.std(eddy_subset.amplitude.values[pos])
+                        binned_cube_cp[('speed_radius', process)].data[j,i] = np.std(eddy_subset.speed_radius.values[pos])
+                        binned_cube_cp[('speed_average', process)].data[j,i] = np.std(eddy_subset.speed_average.values[pos])
+                        binned_cube_cp[('shape_error', process)].data[j,i] = np.std(eddy_subset.effective_contour_shape_error.values[pos])
+
+    for process in stat_process[1:]:
+        for prop in ['density', 'genesis', 'feature_density']:
+            binned_cube_cp[(prop, process)] = binned_cube_cp[(prop, 'mean')].copy()
+
+    for process in stat_process:
+        # average over years for properties that are not already processed
+        for prop in ['density', 'genesis', 'feature_density']:
+            binned_cube_cp[(prop, process)].data /= nyears
+
+        for prop in properties_2d:
+            binned_cube_cp[(prop, process)].data *= scaling[prop]
+
+    cube_list = {}
+    for process in stat_process:
+        cube_list[process] = iris.cube.CubeList()
+        for prop in properties_2d:
+            cube_list[process].append(binned_cube_cp[(prop, process)])
+            
+    return binned_cube_cp, cube_list
+        
 def calc_birth(suites, min_lifetime, plot_type='genesis', nyears=5):
     '''
     For genesis, need to get the position of the first point of each eddy, and then the lat/lon of that
@@ -254,6 +371,104 @@ def calc_birth(suites, min_lifetime, plot_type='genesis', nyears=5):
                 eddy_genesis[(suite, eddy_type)] = cube
                 iris.save(cube, nc_file)
 
+def calc_property_2d(suites, min_lifetime, nyears=5):
+    '''
+    For genesis, need to get the position of the first point of each eddy, and then the lat/lon of that
+    For density, need all the lat/lon of each track
+    Try to do this more generically to enable capturing properties of the eddies on lat/lon grid as well
+    '''
+
+    eddy_genesis = {}
+    for isu, suite in enumerate(suites):
+        for eddy_type in eddy_types:
+            nc_file = os.path.join(eddy_prop_dir, suite+'_'+eddy_type+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_property2d_mean.nc')
+            print('read ',nc_file)
+            if not os.path.exists(nc_file):
+                eddy_subset = read_datafiles(suite, eddy_type, nyears, min_lifetime)
+                eddy = eddy_subset[(suite, eddy_type)]
+                cube_cp, cube_list = storm_lat_lon_prop(eddy, nyears)
+                for process in stat_process:
+                    iris.save(cube_list[process], nc_file[:-7]+process+'.nc')
+
+def coastlines(ax):
+    ax.coastlines()
+    gl = ax.gridlines(draw_labels = True)
+    gl.xlabels_top = False
+    gl.ylabels_right = False
+    gl.ypadding = 5.0
+    gl.xpadding = 2.0
+    gl.xlocator = mticker.FixedLocator([-110, -100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0])
+    gl.ylocator = mticker.FixedLocator([20, 30, 40, 50, 60, 70, 80]) 
+    gl.yformatter = LATITUDE_FORMATTER
+    gl.xformatter = LONGITUDE_FORMATTER
+
+def plot_properties_2d(suites, min_lifetime, plot_type='density', nyears=5, process='mean'):
+
+    fig = plt.figure(figsize=(13,7),dpi=100)
+    proj=ccrs.PlateCarree()
+    #proj = ccrs.Robinson()
+    for ie, eddy_type in enumerate(eddy_types):
+        for isu, suite in enumerate(suites):
+            nc_file = os.path.join(eddy_prop_dir, suite+'_'+eddy_type+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_property2d_'+process+'.nc')
+            cube = iris.load_cube(nc_file, plot_type)
+            #nx = 1440
+            #ny = 720
+            #cube_proj, extent = iris.analysis.cartography.project(cube, proj, nx=nx, ny=ny)
+            # Create subplot
+            ax = fig.add_subplot(2,2,ie*2+isu+1, projection=proj)
+            m = ax.pcolormesh(cube.coord('longitude').points, cube.coord('latitude').points, cube.data, cmap='terrain_r', vmin=c_levels[plot_type][0], vmax=c_levels[plot_type][1])
+            #m = ax.pcolormesh(cube_proj.coord('projection_x_coordinate').points, cube_proj.coord('projection_y_coordinate').points, cube_proj.data, cmap='terrain_r', vmin=c_levels[plot_type][0], vmax=c_levels[plot_type][1], rasterized=True)
+            plt.title(suite+' '+eddy_type+', '+process)
+            ax.coastlines()
+            gl = ax.gridlines(draw_labels = True)
+            gl.xlabels_top = False
+            if isu == 1:
+                gl.ylabels_left = False
+            gl.ylabels_right = False
+
+            cb = plt.colorbar(m, cax=ax.figure.add_axes([0.94, 0.2, 0.01, 0.6]))
+
+    fig.subplots_adjust(bottom=0.04, left=0.05, right=.91, top=.95, wspace=0.06, hspace=0.0)
+    plt.suptitle('All eddies '+plot_type+' over '+str(nyears)+' years, '+str(min_lifetime)+'d min lifetime')
+    #plt.tight_layout()
+    suite_names = '_'.join(suites)
+    figname = os.path.join(fig_dir, 'eddy_'+suite_names+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_'+plot_type+'_'+process+'.pdf')
+    plt.savefig(figname)
+    plt.savefig(figname[:-3]+'png')
+    plt.show()
+
+def plot_properties_zonalmean(suites, min_lifetime, plot_type='density', nyears=5, process='mean'):
+
+    fig = plt.figure(figsize=(8,8),dpi=100)
+    proj=ccrs.PlateCarree()
+    for ie, eddy_type in enumerate(eddy_types):
+        ax = fig.add_subplot(2,1,ie+1)
+        for isu, suite in enumerate(suites):
+            nc_file = os.path.join(eddy_prop_dir, suite+'_'+eddy_type+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_property2d_'+process+'.nc')
+            cube = iris.load_cube(nc_file, plot_type)
+            zonal_mean = cube.collapsed('longitude', iris.analysis.MEAN)
+            # Create subplot
+            if suite == 'aviso':
+                colour = 'black'
+            else:
+                colour = 'red'
+            plt.plot(cube.coord('latitude').points, zonal_mean.data, label=suite, color=colour)
+            plt.xlabel('Latitude')
+            plt.ylabel(plot_type)
+            plt.title(eddy_type+', '+process)
+            if plot_type == 'speed_average':
+                plt.ylim([0, 50])
+        plt.legend(loc='upper right')
+
+    fig.subplots_adjust(bottom=0.08, left=0.1, right=.95, top=.91, wspace=0.2, hspace=0.3)
+    plt.suptitle('All eddies '+plot_type+' over '+str(nyears)+' years, '+str(min_lifetime)+'d min lifetime, zonal mean')
+    #plt.tight_layout()
+    suite_names = '_'.join(suites)
+    figname = os.path.join(fig_dir, 'eddy_'+suite_names+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_'+plot_type+'_'+process+'_zonalmean.pdf')
+    plt.savefig(figname)
+    plt.savefig(figname[:-3]+'png')
+    plt.show()
+
 def plot_birth(suites, min_lifetime, plot_type='density', nyears=5):
 
     fig = plt.figure(figsize=(13,7),dpi=100)
@@ -268,7 +483,7 @@ def plot_birth(suites, min_lifetime, plot_type='density', nyears=5):
             plt.title(suite+' '+eddy_type)
             cb = plt.colorbar(m, cax=ax.figure.add_axes([0.94, 0.2, 0.01, 0.6]))
     fig.subplots_adjust(bottom=0.04, left=0.05, right=.91, top=.95, wspace=0.06, hspace=0.0)
-    plt.suptitle('All eddies '+plot_type+' over '+str(nyears)+' years, '+str(min_lifetime)+' min lifetime')
+    plt.suptitle('All eddies '+plot_type+' over '+str(nyears)+' years, '+str(min_lifetime)+'d min lifetime')
     #plt.tight_layout()
     suite_names = '_'.join(suites)
     figname = os.path.join(fig_dir, 'eddy_'+plot_type+'_'+suite_names+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime.pdf')
@@ -440,7 +655,7 @@ def plot_lifetime_histogram(a, suites, nyears, min_lifetime):
         ax.legend()
 
     suite_names = '_'.join(suites)
-    plt.title('Eddy lifetimes for '+suite_names+' over '+str(nyears)+' years with '+str(min_lifetime)+' min lifetime')
+    plt.title('Eddy lifetimes for '+suite_names+' over '+str(nyears)+' years with '+str(min_lifetime)+'d min lifetime')
     figname = os.path.join(fig_dir, 'eddy_lifetime_'+suite_names+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime.png')
     plt.savefig(figname)
 
@@ -470,8 +685,13 @@ def lifetime_histogram(suites, nyears, min_lifetime):
 
 def calculate_eddy_properties(suite, nyears, min_lifetime):
     for eddy_type in eddy_types:
-        eddy_subset = read_datafiles(suite, eddy_type, nyears, min_lifetime)        
+        pickle_file_prop1 = os.path.join(eddy_prop_dir, suite+'_'+eddy_type+'_'+eddy_prop_1[0]+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_hist.pkl')
+        if os.path.exists(pickle_file_prop1):
+            continue
+
+        eddy_subset = read_datafiles(suite, eddy_type, nyears, min_lifetime)
         eddy = eddy_subset[(suite, eddy_type)]
+
         for ina, name in enumerate(eddy_prop_1):
             pickle_file = os.path.join(eddy_prop_dir, suite+'_'+eddy_type+'_'+name+'_'+str(nyears)+'years_'+str(min_lifetime)+'minlifetime_hist.pkl')
             print('process ', pickle_file)
@@ -685,15 +905,12 @@ def plot_eddy_properties_2(suites, min_lifetime, nyears):
 
 def work(suites):
 
-    min_lifetime = min_lifetime_plot_tracks
-    plot_tracks(suites, nyears, min_lifetime=min_lifetime)
-
-    # calculates eddy birth/tracks on 2x2 degree grid (writes pkl files as intermediate)
-    min_lifetime = min_lifetime_pdfs
-    calc_birth(suites, min_lifetime, plot_type='density', nyears=nyears)
-    calc_birth(suites, min_lifetime, plot_type='genesis', nyears=nyears)
-    plot_birth(suites, min_lifetime, plot_type='density', nyears=nyears)
-    plot_birth(suites, min_lifetime, plot_type='genesis', nyears=nyears)
+    min_lifetime = min_lifetime_density
+    calc_property_2d(suites, min_lifetime, nyears=nyears)
+    for process in stat_process:
+        for prop in properties_2d:
+            plot_properties_2d(suites, min_lifetime, plot_type=prop, nyears=nyears, process=process)
+            plot_properties_zonalmean(suites, min_lifetime, plot_type=prop, nyears=nyears, process=process)
 
     min_lifetime = min_lifetime_pdfs
     lifetime_histogram(suites, nyears, min_lifetime)
@@ -704,6 +921,9 @@ def work(suites):
         calculate_eddy_properties(suite, nyears, min_lifetime)
     plot_eddy_properties_2(suites, min_lifetime, nyears)
 
+    min_lifetime = min_lifetime_plot_tracks
+    plot_tracks(suites, nyears, min_lifetime=min_lifetime)
+
 ## old code or code yet to work
     #for suite in suites:
     #    plot_eddy_properties(eddy_subset, [suite])
@@ -711,6 +931,13 @@ def work(suites):
     #eddy_subset = read_datafiles(suites, min_lifetime = min_lifetime_tracks)
     #plot_amplitude(suites, eddy_subset)
     #plot_radius(suites, eddy_subset)
+
+    # calculates eddy birth/tracks on 2x2 degree grid (writes pkl files as intermediate)
+    #min_lifetime = min_lifetime_pdfs
+    #calc_birth(suites, min_lifetime, plot_type='density', nyears=nyears)
+    #calc_birth(suites, min_lifetime, plot_type='genesis', nyears=nyears)
+    #plot_birth(suites, min_lifetime, plot_type='density', nyears=nyears)
+    #plot_birth(suites, min_lifetime, plot_type='genesis', nyears=nyears)
 
 
 if __name__ == '__main__':
