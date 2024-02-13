@@ -71,11 +71,10 @@ properties_2d = ['density', 'genesis', 'feature_density', 'amplitude', 'speed_ra
 units = {'density': 'Counts per 2 degree per year', 'genesis': 'Counts per 2 degree per year', 'feature_density': 'Unique counts per 2 degree per year', 'amplitude': 'cm', 'speed_radius': 'm', 'speed_average': 'cm/s', 'shape_error': '1'}
 scaling = {'density': 1., 'genesis': 1., 'feature_density': 1., 'amplitude': 100., 'speed_radius': 0.001, 'speed_average': 100., 'shape_error': 1}
 c_levels = {'density': [0, 300], 'genesis': [0, 1.5], 'feature_density': [0, 5], 'amplitude': [0, 30], 'speed_radius': [0, 150], 'speed_average': [0, 100], 'shape_error': [0, 70]}
+
+# which statistics to use to calculate 2d properties point-by-point
 stat_process = ['mean', 'median', 'stdev']
 stat_process = ['mean']
-
-# all of the eddy properties in the netcdf file (for future reference)
-#eddy_props = ['effective_area', 'effective_contour_height', 'effective_contour_shape_error', 'effective_radius', 'inner_contour_height', 'speed_area', 'speed_contour_height', 'speed_contour_shape_error']
 
 def load_data(fname, year_end, suite, min_lifetime=None):
     # Load dataset with xarray
@@ -922,7 +921,7 @@ def work(suites):
     plot_eddy_properties_2(suites, min_lifetime, nyears)
 
     min_lifetime = min_lifetime_plot_tracks
-    plot_tracks(suites, nyears, min_lifetime=min_lifetime)
+    #plot_tracks(suites, nyears, min_lifetime=min_lifetime)
 
 ## old code or code yet to work
     #for suite in suites:
